@@ -1,0 +1,2 @@
+"""Menu service application."""
+

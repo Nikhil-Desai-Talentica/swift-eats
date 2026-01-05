@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: swifteats-logistics-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: swifteats_logistics
+    ports:
+      - "5434:5432"  # Different port to avoid conflicts
+    volumes:
+      - logistics_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: swifteats-logistics-redis
+    ports:
+      - "6381:6379"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  logistics-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: swifteats-logistics-service
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/swifteats_logistics
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8002:8000"  # Different port from other services
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  location-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: swifteats-location-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/swifteats_logistics
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CONSUMER_NAME=processor-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m app.workers.location_processor
+
+volumes:
+  logistics_postgres_data:
+
