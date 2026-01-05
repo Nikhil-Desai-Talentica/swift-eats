@@ -1,0 +1,194 @@
+services:
+  # ==========================
+  # Databases & Redis
+  # ==========================
+
+  order-postgres:
+    image: postgres:15-alpine
+    container_name: swifteats-order-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: swifteats
+    ports:
+      - "5432:5432"
+    volumes:
+      - order_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  order-redis:
+    image: redis:7-alpine
+    container_name: swifteats-order-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  menu-postgres:
+    image: postgres:15-alpine
+    container_name: swifteats-menu-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: swifteats_menu
+    ports:
+      - "5433:5432"
+    volumes:
+      - menu_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  menu-redis:
+    image: redis:7-alpine
+    container_name: swifteats-menu-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  logistics-postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: swifteats-logistics-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: swifteats_logistics
+    ports:
+      - "5434:5432"
+    volumes:
+      - logistics_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  logistics-redis:
+    image: redis:7-alpine
+    container_name: swifteats-logistics-redis
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  # ==========================
+  # Order Service
+  # ==========================
+
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: swifteats-order-service
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@order-postgres:5432/swifteats
+      - REDIS_HOST=order-redis
+      - REDIS_PORT=6379
+    ports:
+      - "8000:8000"
+    depends_on:
+      order-postgres:
+        condition: service_healthy
+      order-redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  payment-worker:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: swifteats-payment-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@order-postgres:5432/swifteats
+      - REDIS_HOST=order-redis
+      - REDIS_PORT=6379
+    depends_on:
+      order-postgres:
+        condition: service_healthy
+      order-redis:
+        condition: service_healthy
+    command: python -m app.workers.payment_worker
+
+  # ==========================
+  # Menu Service
+  # ==========================
+
+  menu-service:
+    build:
+      context: ./menu-service
+      dockerfile: Dockerfile
+    container_name: swifteats-menu-service
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@menu-postgres:5432/swifteats_menu
+      - REDIS_HOST=menu-redis
+      - REDIS_PORT=6379
+    ports:
+      - "8001:8000"
+    depends_on:
+      menu-postgres:
+        condition: service_healthy
+      menu-redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ==========================
+  # Logistics Service
+  # ==========================
+
+  logistics-service:
+    build:
+      context: ./logistics-service
+      dockerfile: Dockerfile
+    container_name: swifteats-logistics-service
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@logistics-postgres:5432/swifteats_logistics
+      - REDIS_HOST=logistics-redis
+      - REDIS_PORT=6379
+    ports:
+      - "8002:8000"
+    depends_on:
+      logistics-postgres:
+        condition: service_healthy
+      logistics-redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  location-worker:
+    build:
+      context: ./logistics-service
+      dockerfile: Dockerfile
+    container_name: swifteats-location-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@logistics-postgres:5432/swifteats_logistics
+      - REDIS_HOST=logistics-redis
+      - REDIS_PORT=6379
+      - CONSUMER_NAME=processor-1
+    depends_on:
+      logistics-postgres:
+        condition: service_healthy
+      logistics-redis:
+        condition: service_healthy
+    command: python -m app.workers.location_processor
+
+volumes:
+  order_postgres_data:
+  menu_postgres_data:
+  logistics_postgres_data:
+
+
